@@ -5,7 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	consumer "github.com/haijianyang/go-sqs-consumer"
+	consumer "github.com/gs-sinha/go-sqs-consumer"
 )
 
 func Handler(message *sqs.Message) error {

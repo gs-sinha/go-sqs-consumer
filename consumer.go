@@ -3,6 +3,7 @@ package consumer
 import (
 	"errors"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 )
 
 type Handler func(message *sqs.Message) error
+type BatchHandler func(message []*sqs.Message) []*sqs.Message
 
 type Worker struct {
 	Config *Config
@@ -224,4 +226,68 @@ func (this *Worker) handleMessage(message *sqs.Message, handler Handler) error {
 	}
 
 	return nil
+}
+
+func (this *Worker) BatchStart(handler BatchHandler) {
+	for idle := int64(0); ; {
+		if aws.Int64Value(this.Config.Idle) > 0 && idle > aws.Int64Value(this.Config.Idle) && aws.Int64Value(this.Config.Sleep) > 0 {
+			idle = 0
+
+			time.Sleep(time.Duration(aws.Int64Value(this.Config.Sleep)) * time.Second)
+		}
+
+		output, err := this.Sqs.ReceiveMessage(this.Input)
+		if err != nil {
+			if err != nil {
+				log.Printf("[SQS] ReceiveMessage error: %v %v", err, output)
+			}
+
+			if this.Events[EventReceiveMessageError] != nil {
+				this.Events[EventReceiveMessageError].(OnReceiveMessageError)(err)
+			}
+
+			continue
+		}
+
+		if len(output.Messages) > 0 {
+			idle = 0
+
+			if this.Events[EventReceiveMessage] != nil {
+				this.Events[EventReceiveMessage].(OnReceiveMessage)(output.Messages)
+			}
+
+			this.runBatch(handler, output.Messages)
+		} else {
+			idle++
+		}
+	}
+}
+
+func (this *Worker) BatchConcurrent(handler BatchHandler, concurrency int) {
+	for i := 0; i < concurrency; i++ {
+		go this.BatchStart(handler)
+	}
+}
+
+func (this *Worker) runBatch(batchHandler BatchHandler, messages []*sqs.Message) {
+	toBeDeletedMessages := batchHandler(messages)
+	var deleteBatchInput []*sqs.DeleteMessageBatchRequestEntry
+	for i, message := range toBeDeletedMessages {
+		id := strconv.Itoa(i)
+		input := &sqs.DeleteMessageBatchRequestEntry{
+			ReceiptHandle: message.ReceiptHandle,
+			Id:            &id,
+		}
+		deleteBatchInput = append(deleteBatchInput, input)
+	}
+
+	entries := &sqs.DeleteMessageBatchInput{
+		QueueUrl: this.Input.QueueUrl,
+		Entries:  deleteBatchInput,
+	}
+
+	output, err := this.Sqs.DeleteMessageBatch(entries)
+	if err != nil {
+		log.Printf("[SQS] DeleteMessageBatch error: %v %v", err, output)
+	}
 }

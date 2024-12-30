@@ -80,6 +80,13 @@ func Handler(message *sqs.Message) error {
 	return nil
 }
 
+
+func BatchHandler(messages []*sqs.Message) []*sqs.Message {
+	fmt.Println("batch handle", messages)
+	///messages which are returned will be deleted
+	return messages
+}
+
 worker := consumer.New(&consumer.Config{
 	Region:   aws.String("region"),
 	QueueUrl: aws.String("url"),
@@ -88,11 +95,13 @@ worker := consumer.New(&consumer.Config{
 // 1. do it yourself
 go worker.Start(Handler)
 go worker.Start(Handler)
+go worker.BatchStart(BatchHandler)
 ...
 
 // 2. automation
 concurrency := 6
 worker.Concurrent(Handler, concurrency)
+worker.BatchConcurrent(BatchHandler, concurrency)
 ```
 
 ## API
